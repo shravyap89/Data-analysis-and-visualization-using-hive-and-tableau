@@ -1,0 +1,345 @@
+-----------------------------------------------------
+CREATE EXTERNAL TABLE emails
+(eid STRING, t STRING, sender STRING, receiver STRING, cc STRING, subject STRING,context STRING)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/given1';
+
+
+CREATE EXTERNAL TABLE emails_input
+(eid STRING, t STRING, sender STRING, receiver STRING, cc STRING, subject STRING,context STRING)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://spring-2014-ds/enron_dataset';
+
+insert overwrite table emails
+select ltrim(eid), ltrim(t), ltrim(sender), ltrim(receiver), ltrim(cc),ltrim(subject), ltrim(context)
+from emails_input;
+
+-----------------------------------------------------------
+
+QUERY-1
+
+CREATE EXTERNAL TABLE emails_query1
+(t STRING, context INT)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result21';
+
+INSERT OVERWRITE TABLE emails_query1
+SELECT regexp_extract(emails.t,'(.{3}),\\s(\\d{1,2})\\s(.{3})\\s(\\d{4})\\s(\\d{2}):(\\d{2}):(\\d{2})\\s-(\\d{4})\\s.*',5) as t, length (emails.context)
+FROM emails
+WHERE t is NOT NULL;
+
+CREATE EXTERNAL TABLE emails_query2
+(t STRING,l DOUBLE)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result22';
+
+INSERT OVERWRITE TABLE emails_query2
+SELECT t, CAST (context as DOUBLE)
+FROM emails_query1
+WHERE t is NOT NULL;
+
+CREATE EXTERNAL TABLE emails_query3
+(t STRING,l DOUBLE)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result23';
+
+INSERT OVERWRITE TABLE emails_query3
+SELECT t,avg(l)
+FROM emails_query2
+where t!='  '
+GROUP BY t;
+
+----------------------------------------------------------------------
+
+QUERY-2
+
+CREATE EXTERNAL TABLE emails_input
+(eid STRING, t STRING, sender STRING, receiver STRING, cc STRING, subject STRING,context STRING)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://spring-2014-ds/enron_dataset';
+
+insert overwrite table emails
+select ltrim(eid), ltrim(t), ltrim(sender), ltrim(receiver), ltrim(cc),ltrim(subject), ltrim(context)
+from emails_input;
+
+CREATE EXTERNAL TABLE year_email
+(eid STRING, t STRING)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result31';
+
+INSERT OVERWRITE TABLE year_email
+SELECT ALL eid,regexp_extract(emails.t,'(.{3}),\\s(\\d{1,2})\\s(.{3})\\s(\\d{4})\\s(\\d{2}):(\\d{2}):(\\d{2})\\s-(\\d{4})\\s.*',4)
+FROM emails
+
+CREATE EXTERNAL TABLE year_email_count
+(eid STRING, count INT)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result32';
+
+INSERT OVERWRITE TABLE year_email_count
+SELECT ltrim(t),count( DISTINCT eid)
+FROM year_email
+group by ltrim(t)
+
+---------------------------------------------------------------------------------------
+
+QUERY-3
+
+
+Splitting of Receiver
+
+// this should be put in a table where receiver is defined as array  RESULT 1- receiver split
+CREATE EXTERNAL TABLE emails1
+(eid STRING,sender1 STRING, receiver1 array<STRING>)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result1';
+
+// for split to form array
+insert overwrite table emails1
+select eid,sender,split(receiver,',')
+from emails;
+
+
+CREATE EXTERNAL TABLE emails2
+(eid2 STRING,sender2 STRING, receiver2 STRING)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result2';
+
+
+// for explode function, USE THIS AS A BASE TABLE
+insert overwrite table emails2
+select eid,sender1, ltrim(receiver2)
+from emails1 lateral view explode(receiver1)emails2 as receiver2;
+
+
+// select distinct sender and receiver to get total of all senders and receivers
+
+CREATE EXTERNAL TABLE emailid
+(emailid STRING)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result3';
+
+insert overwrite table emailid
+select distinct emailid
+from (
+select distinct sender2 as emailid
+from emails2
+UNION ALL
+select distinct receiver2 as emailid
+from emails2)emailid;
+
+............................................................................
+
+// CALCULATION OF DISTINCT SENDER
+
+CREATE EXTERNAL TABLE email_sender
+(emailid STRING, eid STRING)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result4';
+
+insert overwrite table email_sender
+select ltrim(emailid.emailid),ltrim(emails.eid)
+from emailid JOIN emails ON (ltrim(emails.sender)=ltrim(emailid.emailid))
+
+
+CREATE EXTERNAL TABLE email_sendercount
+(email_id STRING, count INT)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result5';
+
+
+// use of aggregate function to count total number of times each emailid sends messages
+insert overwrite table email_sendercount
+select emailid,count(DISTINCT eid) as count1
+from email_sender
+group by emailid
+order by count1 desc;
+
+....................................................................................
+CREATE EXTERNAL TABLE email_receiver
+(emailid STRING, eid STRING)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result6';
+
+insert overwrite table email_receiver
+select emailid.emailid, emails2.eid2
+from emails2 JOIN emailid ON (emails2.receiver2=emailid.emailid)
+
+
+
+
+CREATE EXTERNAL TABLE email_receivercount
+(email_id STRING, count INT)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result7';
+
+// use of aggregate function to count total number of times each emailid sends messages
+insert overwrite table email_receivercount
+select emailid,count(DISTINCT eid) as count1
+from email_receiver
+group by emailid
+order by count1 desc;
+....................................................................................
+
+Break CC into parts
+
+CREATE EXTERNAL TABLE emails_fromtocc
+(eid STRING,sender1 STRING, cc1 array<string>)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result8';
+
+// for split to form array
+insert overwrite table emails_fromtocc
+select eid,sender,split(cc,',')
+from emails;
+
+
+CREATE EXTERNAL TABLE emails3
+(eid3 STRING,sender3 STRING,cc3 STRING)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result9';
+
+
+// for explode function, USE THIS AS A BASE TABLE
+insert overwrite table emails3
+select eid,sender1,ltrim(cc3)
+from emails_fromtocc 
+lateral view explode(cc1)emails3 as cc3
+where cc3 is not null;
+
+....................................................................................
+// Calculate total number of distinct CC id's, emaild of sender, receiver
+
+
+CREATE EXTERNAL TABLE emailid1
+(emailid1 STRING)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result10';
+
+insert overwrite table emailid1
+select distinct emailid1
+from (
+select distinct emailid as emailid1
+from emailid
+UNION ALL
+select distinct cc3 as emailid1
+from emails3)emailid1;
+
+................................................................................................................
+//
+
+CREATE EXTERNAL TABLE email_cc
+(emailid STRING, eid STRING)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result11';
+
+insert overwrite table email_cc
+select emailid1.emailid1, emails3.eid3
+from emails3 JOIN emailid1 ON (emails3.cc3=emailid1.emailid1);
+
+
+CREATE EXTERNAL TABLE email_cccount
+(email_id STRING, count INT)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result12';
+
+// use of aggregate function to count total number of times each emailid sends messages
+insert overwrite table email_cccount
+select emailid,count(DISTINCT eid) as count1
+from email_cc
+group by emailid
+order by count1 desc;
+ 
+.......................................................................................................
+
+FULL OUTER JOIN OF TABLE
+
+//SELECT emailid1.emailid1,email_sendercount.count, email_receivercount.count
+FROM emailid1 FULL OUTER JOIN email_sendercount ON (emailid1.emailid=email_sendercount.email_id) FULL OUTER JOIN email_receivercount ON (emailid1.emailid1=email_receivercount.email_id);
+
+CREATE EXTERNAL TABLE email_sender_receiver
+(emailid STRING, sender INT, receiver INT)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result13';
+
+
+insert overwrite table email_sender_receiver
+SELECT emailid1.emailid1,email_sendercount.count, email_receivercount.count
+FROM emailid1 FULL OUTER JOIN email_sendercount ON (emailid1.emailid1=email_sendercount.email_id) FULL OUTER JOIN email_receivercount ON (emailid1.emailid1=email_receivercount.email_id);
+
+CREATE EXTERNAL TABLE email_sender_receiver_cc
+(emailid1 STRING, sender1 INT, receiver1 INT, cc1 INT)
+ROW FORMAT 
+DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION 's3n://hive-project2/enron/result14';
+
+insert overwrite table email_sender_receiver_cc
+SELECT email_sender_receiver.emailid, email_sender_receiver.sender, email_sender_receiver.receiver, email_cccount.count
+FROM email_sender_receiver FULL OUTER JOIN email_cccount ON (email_sender_receiver.emailid=email_cccount.email_id);
+
+----------------------------------------------------------------------------------------------------------------------------------------------
